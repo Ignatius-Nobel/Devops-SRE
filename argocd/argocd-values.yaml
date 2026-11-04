@@ -1,0 +1,15 @@
+argo-cd:
+  global:
+    image:
+      tag: "v2.11.3"
+  server:
+    service:
+      type: NodePort
+    extraArgs:
+      - --insecure
+  dex:
+    enabled: false
+  notifications:
+    enabled: false
+  applicationSet:
+    enabled: false
