@@ -1,0 +1,16 @@
+# k3d is used (not kind) because k3s ships an embedded NetworkPolicy controller,
+# so the NetworkPolicies in k8s/base are actually enforced without installing Calico/Cilium.
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+metadata:
+  name: sre
+servers: 1
+agents: 2
+ports:
+  - port: 8080:80
+    nodeFilters: [loadbalancer]
+options:
+  k3s:
+    extraArgs:
+      - arg: --disable=metrics-server   # not needed; Prometheus provides metrics
+        nodeFilters: [server:*]
