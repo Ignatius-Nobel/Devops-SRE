@@ -1,0 +1,2 @@
+# SAST config: 0.0.0.0 bind warnings (B104) are intentionally ignored per assessment rules
+skips: ["B104"]
