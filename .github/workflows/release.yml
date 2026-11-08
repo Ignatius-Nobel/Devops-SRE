@@ -1,28 +1,93 @@
 name: Release Pipeline
+# Runs ONLY when a PR is merged into main (bot commits to main do not trigger it).
 on:
-  push:
-    branches:
-      - main
+  pull_request:
+    branches: [main]
+    types: [closed]
+
+permissions:
+  contents: read
+
+env:
+  TRIVY_VERSION: "0.58.1"
 
 jobs:
-  release:
+  build-push:
+    name: Build & push py${{ matrix.python }}
+    if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
-    env:
-      IMAGE: ${{ secrets.DOCKER_USERNAME }}/my-app
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: true
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v2
-
-      - name: Build Docker image
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+      - name: Compute image name and tag
+        id: meta
         run: |
-          docker build -t ${{ env.IMAGE }}:${{ github.sha }} -t ${{ env.IMAGE }}:latest .
-
-      - name: Push to Docker Hub
+          echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+          echo "tag=py${{ matrix.python }}-${MERGE_SHA::7}" >> "$GITHUB_OUTPUT"
+        env:
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build (load locally for final scan)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          build-args: PYTHON_VERSION=${{ matrix.python }}
+          tags: ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
+          cache-from: type=gha,scope=py${{ matrix.python }}
+      - name: Final Trivy gate
         run: |
-          echo ${{ secrets.DOCKER_PASSWORD }} | docker login -u ${{ secrets.DOCKER_USERNAME }} --password-stdin
-          docker push --all-tags ${{ env.IMAGE }}
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:${TRIVY_VERSION} image --severity CRITICAL \
+            --ignore-unfixed --exit-code 1 ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
+      - name: Push
+        run: docker push ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
 
-      - name: Update Kubernetes manifests
+  update-manifests:
+    name: GitOps tag bump
+    needs: build-push
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          # An admin PAT is needed to push to a protected branch (see docs/branch-protection)
+          token: ${{ secrets.GITOPS_PAT || secrets.GITHUB_TOKEN }}
+      - name: Update image tags in kustomization
+        env:
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
         run: |
-          # Update image tags in Kubernetes manifests
-          # This step will require a script or command to update the manifests
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"
+          SHORT="${MERGE_SHA::7}"
+          cd k8s/base
+          for v in 311 312 313; do
+            PYDOT="3.${v:1}"
+            kustomize edit set image "app-py${v}=${IMAGE}:py${PYDOT}-${SHORT}"
+          done
+          cat kustomization.yaml
+      - name: Commit and push
+        run: |
+          git config user.name  "release-bot"
+          git config user.email "release-bot@users.noreply.github.com"
+          git add k8s/base/kustomization.yaml
+          git diff --cached --quiet && echo "no change" && exit 0
+          git commit -m "chore(release): bump images to ${MERGE_SHA::7} [skip ci]"
+          git pull --rebase origin main
+          git push origin main
+        env:
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
