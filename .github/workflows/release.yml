@@ -67,7 +67,7 @@ jobs:
         with:
           ref: main
           # An admin PAT is needed to push to a protected branch (see docs/branch-protection)
-          token: ${{ secrets.GITOPS_PAT || secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
       - name: Update image tags in kustomization
         env:
           MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
