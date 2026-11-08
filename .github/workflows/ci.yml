@@ -23,7 +23,7 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.12", cache: pip }
       - run: pip install flake8==7.1.1
-      - run: flake8 app tests
+      - run: flake8 app test
 
   test:
     name: Unit tests (pytest) py${{ matrix.python }}
