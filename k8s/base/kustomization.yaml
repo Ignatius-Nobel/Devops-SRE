@@ -1,0 +1,24 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: leaky-app
+resources:
+  - namespace.yaml
+  - resourcequota.yaml
+  - rbac.yaml
+  - configmap.yaml
+  - networkpolicy.yaml
+  - deployment-py311.yaml
+  - deployment-py312.yaml
+  - deployment-py313.yaml
+  - service.yaml
+# The release pipeline runs `kustomize edit set image ...` to update these tags.
+images:
+  - name: app-py311
+    newName: ghcr.io/OWNER/REPO
+    newTag: py3.11-bootstrap
+  - name: app-py312
+    newName: ghcr.io/OWNER/REPO
+    newTag: py3.12-bootstrap
+  - name: app-py313
+    newName: ghcr.io/OWNER/REPO
+    newTag: py3.13-bootstrap

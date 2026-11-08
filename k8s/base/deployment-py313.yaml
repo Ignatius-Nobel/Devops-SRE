@@ -1,0 +1,100 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: leaky-app-py313
+  labels:
+    app: leaky-app
+    version: py313
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: leaky-app
+      version: py313
+  template:
+    metadata:
+      labels:
+        app: leaky-app
+        version: py313
+    spec:
+      serviceAccountName: leaky-app
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: validate-config
+          image: busybox:1.37.0
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              for k in APP_PORT APP_LEAK_START_MB APP_LEAK_TARGET_MB APP_LEAK_DURATION_SEC; do
+                test -s "/etc/app-config/$k" || { echo "missing config key $k"; exit 1; }
+              done
+              test -n "$APP_API_KEY" || { echo "missing APP_API_KEY secret"; exit 1; }
+              echo "config validated"
+          env:
+            - name: APP_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: leaky-app-secrets
+                  key: APP_API_KEY
+          volumeMounts:
+            - name: app-config
+              mountPath: /etc/app-config
+              readOnly: true
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { cpu: 50m, memory: 32Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+      containers:
+        - name: app
+          image: app-py313   # rewritten by kustomize `images:` (updated by release pipeline)
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: leaky-app-config
+            - secretRef:
+                name: leaky-app-secrets
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 400Mi    # leak hits this -> OOMKilled
+          startupProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 2
+            failureThreshold: 15
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 5
+            failureThreshold: 2
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+      volumes:
+        - name: app-config
+          configMap:
+            name: leaky-app-config
