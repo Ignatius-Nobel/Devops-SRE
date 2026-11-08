@@ -1,0 +1,36 @@
+# helm upgrade --install kps prometheus-community/kube-prometheus-stack -n monitoring -f this-file
+alertmanager:
+  enabled: false            # alerting is handled by Grafana Alerting (task requirement)
+prometheus:
+  prometheusSpec:
+    retention: 24h
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    resources:
+      requests: { cpu: 100m, memory: 400Mi }
+      limits: { memory: 1Gi }
+grafana:
+  adminPassword: ""         # overridden via --set-string in bootstrap.sh
+  envFromSecret: grafana-alert-secrets   # exposes SLACK_WEBHOOK_URL to alert provisioning
+  defaultDashboardsEnabled: true         # includes node-exporter & k8s compute dashboards
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      searchNamespace: ALL
+    datasources:
+      uid: prometheus
+    alerts:
+      enabled: true
+      label: grafana_alert
+      searchNamespace: ALL
+  additionalDataSources:
+    - name: Loki
+      uid: loki
+      type: loki
+      access: proxy
+      url: http://loki.monitoring.svc.cluster.local:3100
+      isDefault: false
+  # Uncomment for the email bonus (also add an email contact point in grafana-alerting/contactpoints.yaml)
+  # grafana.ini:
+  #   smtp: { enabled: true, host: smtp.example.com:587, user: x, password: y, from_address: alerts@example.com }
