@@ -1,24 +1,27 @@
-FROM python:3.12-slim
+# syntax=docker/dockerfile:1.7
+ARG PYTHON_VERSION=3.12
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+# ---- builder: resolve dependencies into an isolated prefix ----
+FROM python:${PYTHON_VERSION}-alpine AS builder
+WORKDIR /build
+COPY requirements.txt .
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 
+# ---- runtime: minimal, non-root, no package manager ----
+FROM python:${PYTHON_VERSION}-alpine
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    APP_PORT=8080
+
+# Remove pip/setuptools/wheel (smaller image, smaller attack surface, fewer CVEs)
+RUN python -m pip uninstall -y pip setuptools wheel >/dev/null 2>&1 || true \
+ && addgroup -S -g 10001 app \
+ && adduser -S -D -H -u 10001 -G app -s /sbin/nologin app
+
+COPY --from=builder /install /usr/local
 WORKDIR /app
+COPY --chown=10001:10001 app/ /app/
 
-# Copy only the application source, keeping the image lean
-COPY app /app/app
-
-# Create a non-root user for better container security
-RUN groupadd --system app && useradd --system --gid app --create-home --home-dir /home/app app \
-    && chown -R app:app /app
-
-USER app
-
+USER 10001:10001
 EXPOSE 8080
-
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthcheck').read()" || exit 1
-
-CMD ["python", "app/app.py"]
-
+CMD ["python", "main.py"]
